@@ -1,0 +1,162 @@
+---
+title: "MicroarrayDataAnalysis GSE3606"
+author: "Zinnera Tariq"
+date: "7/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+### Github Repository
+The github repository is: https://github.com/zinnera/Omics.
+
+### Description of the study
+The purpose of the study was to investigate the effects of acute exercise on gene expression profiles of white blood cells and to identify suitable genes which may serve as surrogate markers for monitoring exercise and training load.
+<br />
+Link to study: https://pubmed.ncbi.nlm.nih.gov/16990507/
+
+### Information on the experimental design
+- **Response variable**: gene expression
+- **Groups**: after exercise, before exercise
+- **Levels**: beforemoderate, beforeexhaustive, aftermoderate, afterexhaustive
+- **Sample size**: 20 
+- **Number of experimental units per each combination of factors**: 5
+<br />
+Five healthy male performed an exhaustive treadmill test. One week later they repeated the test at a moderate speed the same time. Blood samples were drawn before and one hour past the tests. Erythrocytes were lysed and RNA was isolated from the white blood cells. RNA was processed and hybridised on U133A 2.0 Affyetrix GeneChips. Samples were grouped and gene expression changes were detected via multiple algorithms included in GeneSpring 7.2 (Agilent).
+
+### GEO dataset
+```{r}
+library(parallel)
+library(BiocGenerics)
+library(Biobase)
+library(GEOquery)
+library(limma)
+gset <- getGEO("GSE3606")[[1]]
+data_GEO <- exprs(getGEO("GSE3606")[[1]])
+```
+
+### Description of the data
+Link to the data: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE3606
+<br />
+The data has 20 columns(samples) and 22277 rows. 
+```{r}
+dim(data_GEO)
+```
+
+Now, I'm going to plot boxplots for each sample. I'll put different color for each group.
+```{r}
+groups <- "01230012321302301231"
+gname <- c()
+for (i in 1:nchar(groups)) { gname[i] <- substr(groups,i,i) }
+gname <- paste("group", gname, sep="")
+gname <- gname[order(gname)]
+f <- as.factor(gname)
+labels <- c("beforeexhaustive","afterexhaustive","beforemoderate","aftermoderate")
+boxplot(data_GEO, boxwex=0.6, notch=T, main="Boxplot for each sample", outline=FALSE, las=2, col=f)
+legend("topright", labels, fill=palette(), bty="n")
+```
+
+
+
+### Comparisons to be performed between the groups
+Two comparisons will be performed between the groups. One comparison will be between before and after moderate exercise. Another comparison between before and after exhaustive exercise.
+
+### Design Matrix
+$$\begin{pmatrix}
+beforeexhaustive & afterexhaustive & beforemoderate & aftermoderate\\
+1 & 0 & 0 & 0\\
+1 & 0 & 0 & 0\\
+1 & 0 & 0 & 0\\
+1 & 0 & 0 & 0\\
+1 & 0 & 0 & 0\\
+0 & 1 & 0 & 0\\
+0 & 1 & 0 & 0\\
+0 & 1 & 0 & 0\\
+0 & 1 & 0 & 0\\
+0 & 1 & 0 & 0\\
+0 & 0 & 1 & 0\\
+0 & 0 & 1 & 0\\
+0 & 0 & 1 & 0\\
+0 & 0 & 1 & 0\\
+0 & 0 & 1 & 0\\
+0 & 0 & 0 & 1\\
+0 & 0 & 0 & 1\\
+0 & 0 & 0 & 1\\
+0 & 0 & 0 & 1\\
+0 & 0 & 0 & 1\\
+\end{pmatrix}$$
+
+### Contrast Matrix
+This is the contrast matrix where g0=beforeexhaustive, g1=afterexhaustive, g2=beforemoderate, g3=aftermoderate
+$$
+\left(\begin{array}{cc}
+g0\\
+g1\\
+g2\\
+g3
+\end{array}\right)
+=
+\left(\begin{array}{cc} 
+-1 & 0\\
+1 & 0\\
+0 & -1\\
+0 & 1\\
+\end{array}\right)
+\left(\begin{array}{cc} 
+g1-g0\\
+g3-g2
+\end{array}\right)
+$$ 
+
+### Comparison: Before Exhaustive vs After exhaustive
+First, we need to transform the data.
+```{r}
+# log2 transform
+ex <- exprs(gset)
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+          (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  exprs(gset) <- log2(ex) }
+
+```
+
+Using limma package, we'll fit a linear model, estimate the contrasts and generate a toptable and a volcanoplot to compare Before exhaustive and After exhaustive exercise.
+```{r}
+# set up the data and proceed with analysis
+gset$description <- f
+design_matrix <- model.matrix(~ description + 0, gset)
+colnames(design_matrix) <- levels(f)
+cont_matrix1 <- makeContrasts(beforeexhaustivevsafterexhaustive=group1-group0,levels=design_matrix)
+comparison1 <- "Before exhaustive vs After exhaustive exercise"
+fit1 <- lmFit(gset, design_matrix)
+fit.main1<-contrasts.fit(fit1, cont_matrix1)
+fit.main1<-eBayes(fit.main1)
+
+#FILTER BY FALSE DISCOVERY RATE AND FOLD CHANGE
+topTab1 <-  topTable (fit.main1, number=nrow(fit.main1), coef="beforeexhaustivevsafterexhaustive", adjust="fdr",lfc=abs(3))
+###VOLCANO PLOTS
+volcanoplot(fit.main1, highlight=10,
+            main=paste("Differentially expressed genes",colnames(cont_matrix1), sep="\n"))
+
+```
+
+### Comparison: Before Moderate vs After moderate
+Using limma package, we'll fit a linear model, estimate the contrasts and generate a toptable and a volcanoplot to compare Before moderate and After moderate exercise.
+```{r, fig.width=10}
+cont_matrix2 <- makeContrasts(beforemoderatevsaftermoderate=group3-group1,levels=design_matrix)
+comparison2 <- "Before moderate vs After moderate exercise"
+fit.main2<-contrasts.fit(fit1, cont_matrix2)
+fit.main2<-eBayes(fit.main2)
+
+#FILTER BY FALSE DISCOVERY RATE AND FOLD CHANGE
+topTab2 <-  topTable (fit.main2, number=nrow(fit.main2), coef="beforemoderatevsaftermoderate", adjust="fdr",lfc=abs(3))
+###VOLCANO PLOTS
+volcanoplot(fit.main2, highlight=10,main=paste("Differentially expressed genes",colnames(cont_matrix2), sep="\n"))
+```
+
+
+
+
